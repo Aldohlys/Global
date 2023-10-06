@@ -191,7 +191,7 @@ def getCurrencyPairValue(currency_pair,reqType):
   try:
     ib.connect('127.0.0.1', 7496, clientId=getPort())    # use this one for TWS (Traders Workstation) acct mgt
   except ConnectionError:
-    return None
+    return float('nan')
 
   ##### INDIVIDUAL CONTRACTS
   contract = Forex(currency_pair) # Simple contract
