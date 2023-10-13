@@ -8,6 +8,7 @@ library(readr)
 library(DescTools)
 library(quantmod)
 library(stringr)
+library(scales)
 
 ################  Display error message
 
@@ -123,6 +124,7 @@ getOpenDate = function(v_instrument) {
   ### Read Trades.csv file and extract open/adjusted trades, to select all instruments present in dt argument
   trades= data.frame(read.csv("C:\\Users\\aldoh\\Documents\\NewTrading\\Trades.csv",sep=";"))
   ###trades=data.frame(read.csv("C:\\Users\\martinale\\Documents\\RProjects\\RAnalysis\\Trading\\Trades.csv",sep=";"))
+  
   trades %<>% filter(Statut=="Ouvert" | Statut=="Ajusté")
   trades %<>% select(Instrument,TradeDate)
   trades$TradeDate=dmy(trades$TradeDate)
@@ -207,17 +209,19 @@ lastSPY=getLastTickerData("SPY")  ### Mkt value
 
 py_run_file("getContractValue.py")
 
-#### Used by Gonet.R script
-stock_price = function(sym,currency,exchange,reqType) {
-  val=py$getStockValue(sec="STK",sym=sym,currency=currency,exchange=exchange,reqType=reqType)
+
+getVal=function(sym) {
+  cat("No value for ",sym,"\n Enter new price: ")
+  if (interactive()) val=readline(prompt="(interactive) ")
+  else val= readLines(con="stdin", n=1)[[1]]
+  val
+}
+
+#### Used by Gonet.R script and RAnalysis
+stock_price = function(sec="STK",sym,currency,exchange="SMART",reqType=4) {
+  val=py$getStockValue(sec=sec,sym=sym,currency=currency,exchange=exchange,reqType=reqType)
   print(paste("Stock value",sym,":",val))
   
-  getVal=function(sym) {
-    cat("No value for ",sym,"\n Enter new price ")
-    if (interactive()) val=readline(prompt="(interactive): ")
-    else val= readLines(con="stdin", n=1)[[1]]
-    val
-  }
   #### readline works only in interactive mode, 
   #### readLines works only in non-interactive mode
   ### Case where no IBKR connection exists (NULL) or no value returned
@@ -262,21 +266,32 @@ stock_price = function(sym,currency,exchange,reqType) {
 # })
 
 getCurrencyPairs = function() {
+  message("getCurrencyPairs")
+  ### euro_usd and chf_usd data frames - values for the day- are already retrieved
+  usd=read.csv("C:/Users/aldoh/Documents/NewTrading/CurrencyPairs.csv",sep=";")
+  euro_usd=select(usd,date,EUR)
+  chf_usd=select(usd,date,CHF)
+  
+  if (exists("euro_usd") & exists("chf_usd")) 
+    if ((euro_usd$date == today()) & (chf_usd$date == today()))
+        return()
+  
   EUR = py$getCurrencyPairValue("EURUSD",reqType=2)
-  if(is.na(EUR)) {
-    cat("No value for EUR-USD pair\n ")
-    EUR=readline(prompt="Enter value: ")
-  }
+  if (is.null(EUR)) EUR=getVal("EUR/USD")
+  else if (is.na(EUR)) EUR=getVal("EUR/USD")
+  
   EUR=as.double(EUR)
   euro_usd <<- data.frame(date=as.Date(today()),EUR=EUR)
   
   CHF = py$getCurrencyPairValue("CHFUSD",reqType=2)
-  if(is.na(CHF)) {
-    cat("No value for CHF-USD pair\n ")
-    CHF=readline(prompt="Enter value: ")
-  }
-  CHF= as.double(CHF)
+  if (is.null(CHF)) CHF=getVal("CHF/USD")
+  else if (is.na(CHF)) CHF=getVal("CHF/USD")
+  
+  CHF = as.double(CHF)
   chf_usd <<- data.frame(date=as.Date(today()),CHF=CHF)
+  
+  usd = data.frame(date=date,EUR=EUR,CHF=CHF)
+  write.csv("C:/Users/aldoh/Documents/NewTrading/CurrencyPairs.csv",sep=";")
 }
 
 #Returns the amount values formatted with their respective currency sign, based on the currency argument

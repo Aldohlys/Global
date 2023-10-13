@@ -58,15 +58,17 @@ test_num = test_num + 1
 #### getBSComboPrice = function(data,S, r=interest_rate, sig,div=0)
 df1=data.frame(pos=c(2,-2),type=c("Put","Put"),strike=c(100,95),DTE=c(5,10))
 df2=data.frame(pos=c(1,-2),type=c("Call","Put"),strike=c(100,95),DTE=c(5,10))
-dg=rbind(cbind(df1,sig=0.3,S=100),cbind(df2,sig=0.4,S=90))
+df3=data.frame(pos=c(200,2),type=c("Stock","Put"),strike=c(NA,127),DTE=c(NA,18))
+dg=rbind(cbind(df1,sig=0.3,S=100,r=0.05035),cbind(df2,sig=0.4,S=90,r=0.05035),cbind(df3,sig=0.37,S=130,r=0.05))
 test_input = dg %>% group_by(S,sig) %>% nest()
-test_output= c(1.007629,-11.19979)
+test_output= c(1.007629,-11.19979,13002.76)
 test_foo(test_num,getBSComboPrice,test_input,test_output)
 test_num = test_num + 1
 
 
 df1=data.frame(pos=c(2,-2),type=c("Put","Put"),strike=c(100,95),DTE=c(5,10),sig=c(0.2,0.4))
 df2=data.frame(pos=c(1,-2),type=c("Put","Call"),strike=c(80,90),DTE=c(15,1),sig=c(0.1,0.6))
+df4=data.frame(pos=c(200,2),type=c("Stock","Put"),strike=c(0,127),DTE=c(NA,11.99),sig=c(0,0.37))
 dg=rbind(cbind(df1,S=100),cbind(df2,S=90))
 (test_input = dg %>% group_by(S) %>% nest())
 test_output=c(0.1184202, -2.2674)  ### Be aware that price is reduced by PGCD of positions!!!!

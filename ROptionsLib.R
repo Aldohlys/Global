@@ -73,10 +73,11 @@ getBSOptPrice = function(type,S,K,r=interest_rate,DTE,sig,div=0) {
 }
 
 ### getBSPrice ##############
-getBSPrice = function(type,S,K,r=interest_rate,DTE,sig,div=0) {
+### Special as includes also stock price and  multiplier for option prices
+getBSPrice = function(type,S,K,r=interest_rate,DTE,sig,mul,div=0) {
   ##print(paste("getBSOptPrice Type:",type," S:",S," K:",K," r:",r," DTE:",DTE," sig:",sig, "div:",div))
-  if_else(type=="Put", getBSPutPrice(S, K, r, DTE, sig, div),
-          if_else(type=="Call", getBSCallPrice(S, K, r, DTE, sig, div),
+  if_else(type=="Put", mul*getBSPutPrice(S, K, r, DTE, sig, div),
+          if_else(type=="Call", mul*getBSCallPrice(S, K, r, DTE, sig, div),
               if_else(type=="Stock", S, NA)))
 }
 
@@ -96,7 +97,7 @@ getBSComboPrice = function(data,S, r=interest_rate, sig,div=0) {
   
   ######  data contains pos type strike DTE / sig is either in data, or independant - S is independant
   if (any(missing(data),missing(S)) | (missing(sig) & !("sig" %in% names(data)))) {
-    display_error_message("Missing data in getBSComboPrice!!")
+    display_error_message("Missing arguments in getBSComboPrice!!")
     return(NA)
   }
   
@@ -108,7 +109,7 @@ getBSComboPrice = function(data,S, r=interest_rate, sig,div=0) {
   ### Case where sig is to be found in data dataframe, as absent from command line
   if (missing(sig)) {
     data=crossing(data,S=S) %>% group_by(S)
-    price=data %>% summarize(price=sum(pos*getBSOptPrice(type=type,S=S,K=strike,r=r,DTE=DTE,sig=sig))/pgcd(pos))
+    price=data %>% summarize(price=sum(pos*getBSPrice(type=type,S=S,K=strike,r=r,DTE=DTE,mul=mul,sig=sig))/pgcd(pos))
   }
   
   else {
@@ -119,7 +120,7 @@ getBSComboPrice = function(data,S, r=interest_rate, sig,div=0) {
     ### In case sig also present in the data frame
     data$sig=NULL
     data=crossing(data,S=S,sig=sig) %>% group_by(S,sig)
-    price=data %>% summarize(price=sum(pos*getBSPrice(type=type,S=S,K=strike,r=r,DTE=DTE,sig=sig))/pgcd(pos))
+    price=data %>% summarize(price=sum(pos*getBSPrice(type=type,S=S,K=strike,r=r,DTE=DTE,mul=mul,sig=sig))/pgcd(pos))
   }
   return(price$price)
 }
