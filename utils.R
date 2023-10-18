@@ -9,6 +9,7 @@ library(DescTools)
 library(quantmod)
 library(stringr)
 library(scales)
+library(RQuantLib) ## for isBusinessDay function
 
 ################  Display error message
 
@@ -59,7 +60,7 @@ findNearestNumberOrDate = function(numbers, target) {
   nearest = numbers[1]
   diff = abs(as.numeric(nearest - target))
   
-  for (number in numbers) {
+  for (number in as.list(numbers)) {
     current_diff = abs(as.numeric(number - target))
     if (current_diff < diff) {
       diff = current_diff
@@ -117,8 +118,8 @@ getInstrumentName=function(sym,expdate,strike,type) {
   } )
 }
 
-getOpenDate = function(v_instrument) {
-  message("getOpenDate")
+getTradeNr = function(v_instrument) {
+  message("getTradeNr")
   if(length(v_instrument)==0) return(NA)
   if (is.unsorted(v_instrument)) stop("Instrument must be sorted - prog. error")
   ### Read Trades.csv file and extract open/adjusted trades, to select all instruments present in dt argument
@@ -126,60 +127,109 @@ getOpenDate = function(v_instrument) {
   ###trades=data.frame(read.csv("C:\\Users\\martinale\\Documents\\RProjects\\RAnalysis\\Trading\\Trades.csv",sep=";"))
   
   trades %<>% filter(Statut=="Ouvert" | Statut=="Ajusté")
-  trades %<>% select(Instrument,TradeDate)
-  trades$TradeDate=dmy(trades$TradeDate)
+  trades %<>% select(Instrument,TradeNr)
+ 
   ### Retrieve dates in trades.csv corresponding to instruments of dt
   ### If there are several dates for the same instrument, take the oldest one (min)
-  orig_trade_dates=left_join(as.data.frame(list(Instrument=v_instrument)),trades)  %>% 
-      group_by(Instrument) %>% 
-      summarize(dates= (if_else (is.na(TradeDate),NA,suppressWarnings(min(TradeDate,na.rm=T))))) %>% 
-      pull(dates)
+  trade_nr=left_join(as.data.frame(list(Instrument=v_instrument)),trades)  %>% 
+    group_by(Instrument) %>% 
+    pull(TradeNr)
   
-  ### If all instrumenst are NA -> trade is not present - not yet recorded in Trades.csv
-  if (all(is.na(orig_trade_dates))) {
-    message("trade not present")
+  ### If all instrument are NA -> trade is not present - not yet recorded in Trades.csv
+  if (length(trade_nr)==0) {
+    display_error_message("Trade not present in Trades.csv file!")
     print(v_instrument)
     return(NA)
   }
   
-  ### If at least one
-  if (any(is.na(orig_trade_dates))) {
-    old_orig_date=min(orig_trade_dates,na.rm=T)
-    orig_trade_dates=replace(orig_trade_dates,is.na(orig_trade_dates),old_orig_date)
+  ### Retrieve the common Trade Nr
+  trade_nr=unique(trade_nr)
+  
+  ### If at least one then retrieve corresponding trade nr
+  ### And get the original trade date of the trade nr
+  if (length(trade_nr) >1) {
+    message("There is more than one trade in Instrument argument!")
+    return(NA)
   }
-  return(orig_trade_dates)
+  
+  print(trade_nr)
+  return(as.numeric(trade_nr))
+}
+
+
+getOpenDate = function(trade_nr) {
+  message("getOpenDate")
+  
+  trades= data.frame(read.csv("C:\\Users\\aldoh\\Documents\\NewTrading\\Trades.csv",sep=";"))
+  ###trades=data.frame(read.csv("C:\\Users\\martinale\\Documents\\RProjects\\RAnalysis\\Trading\\Trades.csv",sep=";"))
+  
+  trades %<>% filter(TradeNr==trade_nr)
+  if (nrow(trades)==0) {
+    display_error_message("Trade does not exist!")
+    return(NA)
+  }
+  if (unique(trades$Statut)=="Fermé") {
+    display_error_message("Trade is closed in Trades.csv file!")
+    return(NA)
+  }
+  
+  trades %<>% select(TradeDate)
+  trade_dates=dmy(trades$TradeDate)
+  
+  ### If there are several dates for the trade nr (adjusted case), take the oldest one (min)
+  orig_trade_date=suppressWarnings(min(trade_dates,na.rm=T))
+  
+  print(orig_trade_date)
+  return(as.Date(orig_trade_date))
 }
 
 ### Returns a number - sum of rewards (non-NA) for all given instruments that are Open/adjusted
-getRnR = function(v_instrument) {
+getRnR = function(trade_nr) {
   message("getRnR - Reward and Risk")
   ##if (is.unsorted(v_instrument)) stop("Instrument must be sorted - prog. error")
   ### Read Trades.csv file and extract open/adjusted trades, to select all instruments present in dt argument
   trades= data.frame(read.csv("C:\\Users\\aldoh\\Documents\\NewTrading\\Trades.csv",sep=";"))
   ### For office laptop
   ###trades=data.frame(read.csv("C:\\Users\\martinale\\Documents\\RProjects\\RAnalysis\\Trading\\Trades.csv",sep=";"))
-  trades %<>% filter(Statut=="Ouvert" | Statut=="Ajusté")
-  trades %<>% select(Instrument,Reward,Risk)
- 
+  trades %<>% filter(TradeNr==trade_nr)
+  if (nrow(trades)==0) {
+    display_error_message("Trade does not exist!")
+    return(NA)
+  }
+  if (unique(trades$Statut)=="Fermé") {
+    display_error_message("Trade is closed in Trades.csv file!")
+    return(NA)
+  }
+  
   ### Retrieve instruments in trades.csv corresponding to instruments of dt
   ### If there are several records for the same instrument, take the oldest one (min)
-  RnR=left_join(as.data.frame(list(Instrument=v_instrument)),trades)  %>% 
-    summarize(reward= sum(as.double(Reward),na.rm=T),risk= sum(as.double(Risk),na.rm=T))
+  RnR=  trades %>% summarize(reward= sum(as.double(Reward),na.rm=T),risk= sum(as.double(Risk),na.rm=T))
   #print(RnR)
   return(RnR)
 }
 
 ### Tries first on Yahoo (close price) - this works only for previous days, not for today
 ### THen on IBKR and if not available returns NA
-getsymPrice = function(sym,currency,orig_date){
+### report_date can be a closed day -> then takes nearest day in the list
+getsymPrice = function(sym,currency,report_date){
   prices_list=getPrice(getSym(sym))
-  price=filter(prices_list,date==orig_date)
-  if (nrow(price)!=0) price$value else {
-    ### SMART works fine in all cases except for SPX and XSP cases
-    exchange = switch(sym, ESTX50= "EUREX", SPX =, XSP = "CBOE", "SMART")
-    sec=switch(sym, SPX=,XSP=,ESTX50="IND","STK")
-    py$getStockValue(sec=sec,sym=sym,currency=currency,exchange=exchange,reqType=4)
+  
+  ### First case - requested date is an holiday
+  ### Get last close price in this case
+  if ((!isBusinessDay("UnitedStates",report_date)) | report_date < today()) {
+    report_date = findNearestNumberOrDate(prices_list$date, report_date)
+    price = filter(prices_list,date==report_date)
+    return(price$value)
   }
+    
+  #### If report_date is today and is not an holiday
+  ####  then tries to retrieve current market price and finally asks the user
+  #### 
+  ### SMART works fine in all cases except for SPX and XSP cases
+  exchange = switch(sym, ESTX50= "EUREX", SPX =, XSP = "CBOE", "SMART")
+  sec=switch(sym, SPX=,XSP=,ESTX50="IND","STK")
+  return(stock_price(sec,sym,currency,exchange,reqType=4))
+  
 }
   
 ################################################################
@@ -214,7 +264,7 @@ getVal=function(sym) {
   cat("No value for ",sym,"\n Enter new price: ")
   if (interactive()) val=readline(prompt="(interactive) ")
   else val= readLines(con="stdin", n=1)[[1]]
-  val
+  as.double(val)
 }
 
 #### Used by Gonet.R script and RAnalysis
@@ -269,29 +319,27 @@ getCurrencyPairs = function() {
   message("getCurrencyPairs")
   ### euro_usd and chf_usd data frames - values for the day- are already retrieved
   usd=read.csv("C:/Users/aldoh/Documents/NewTrading/CurrencyPairs.csv",sep=";")
-  euro_usd=select(usd,date,EUR)
-  chf_usd=select(usd,date,CHF)
+  ### Convert string to date
+  usd$date=ymd(usd$date)
   
-  if (exists("euro_usd") & exists("chf_usd")) 
-    if ((euro_usd$date == today()) & (chf_usd$date == today()))
-        return()
+  if (usd$date == today())  {
+    #print(usd)
+    return(usd)
+  }
   
   EUR = py$getCurrencyPairValue("EURUSD",reqType=2)
   if (is.null(EUR)) EUR=getVal("EUR/USD")
   else if (is.na(EUR)) EUR=getVal("EUR/USD")
   
-  EUR=as.double(EUR)
-  euro_usd <<- data.frame(date=as.Date(today()),EUR=EUR)
-  
   CHF = py$getCurrencyPairValue("CHFUSD",reqType=2)
   if (is.null(CHF)) CHF=getVal("CHF/USD")
   else if (is.na(CHF)) CHF=getVal("CHF/USD")
   
-  CHF = as.double(CHF)
-  chf_usd <<- data.frame(date=as.Date(today()),CHF=CHF)
+  usd = data.frame(date=today(),EUR=EUR,CHF=CHF)
+  #print(usd)
   
-  usd = data.frame(date=date,EUR=EUR,CHF=CHF)
-  write.csv("C:/Users/aldoh/Documents/NewTrading/CurrencyPairs.csv",sep=";")
+  write.table(usd,"C:/Users/aldoh/Documents/NewTrading/CurrencyPairs.csv",sep=";",dec=".",row.names=F)
+  return(usd)
 }
 
 #Returns the amount values formatted with their respective currency sign, based on the currency argument
@@ -328,12 +376,12 @@ currency_format = function(amount,currency){
 # as.numeric(map2(c(100,110,120),c("CHF","EUR","USD"),currency_convert))
 
 
-### Converts the amount of currency into USD, using euro_usd and chf_usd global variable
+### Converts the amount of currency into USD, using getCurrencyPairs
 currency_convert = function(amount,currency) {
   ### Suppress warning that close is only current close and not final one for today
-  
-  cur_convert= switch(currency, "EUR"=euro_usd$EUR,
-                      "CHF"=chf_usd$CHF,
+  usd=getCurrencyPairs()
+  cur_convert= switch(currency, "EUR"=usd$EUR,
+                      "CHF"=usd$CHF,
                       "USD"=1)
   
   cur_convert*amount
