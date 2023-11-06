@@ -1,15 +1,19 @@
 #### 04.09.2023
-#### FOr all programs
+#### For all programs
 ###############   General purpose utility programs  ###################
 
-library(reticulate)
-library(lubridate)
+
+library(lubridate) ### for today() function
 library(readr)
-library(DescTools)
-library(quantmod)
-library(stringr)
-library(scales)
+library(DescTools) ### for pgcd
+library(quantmod) ## to retrieve data from Yahoo
+library(stringr) ### for str_to_upper function
+library(scales) #### for label_percent() function
 library(RQuantLib) ## for isBusinessDay function
+
+library(reticulate)
+py_run_file("getContractValue.py")
+print("Python functions loaded!")
 
 ################  Display error message
 
@@ -27,6 +31,20 @@ pgcd = function(x) {
   x.na=na.omit(x)
   if (length(x.na)<2) return(as.numeric(x.na))
   else return(GCD(as.numeric(x.na)))
+}
+
+
+##### reformat function is to be used to convert a CSV file 
+##### separated by commas into CSV separated by semi-columns
+reformat = function() {
+  NewTrading="C:\\Users\\aldoh\\Documents\\NewTrading\\"
+  file=paste0(NewTrading,"Trades.csv")
+  new_file=paste0(NewTrading,"NewTrades.csv")
+  trade=read.delim(file,check.names = TRUE,sep=",")
+  col_file=c("TradeNr","Account","TradeDate","Thème","Instrument","Ssjacent","Pos","Prix","Comm.",
+             "Total","Exp.Date","Risk","Reward","PnL","Statut","Currency","Remarques")
+  trade=select(trade,all_of(col_file))
+  write.table(trade,new_file,sep=";",row.names=F,fileEncoding = "UTF-8")
 }
 
 ##########################  General purposes utilities ##########
@@ -79,13 +97,9 @@ getDTE = function(c_datetime,exp_date) {
     
     difftime=exp_datetime - c_datetime
     
-    ### DTE cannot be negative
-    difftime = if_else (difftime < 0, 
-                        0,
-                        { 
-                          difftime=as.numeric(as.duration(difftime)) ### Convert to duration in seconds and then to a number
-                          difftime=round(difftime/(24*3600),2) ### and then convert duration from seconds duration to days duration - keep only 2 digits
-                        })  
+    ### If difftime i.e. DTE is negative then call and put prices are equal to 0 - delta equal to 0 
+    difftime=as.numeric(as.duration(difftime)) ### Convert to duration in seconds and then to a number
+    difftime=round(difftime/(24*3600),2) ### and then convert duration from seconds duration to days duration - keep only 2 digits
     
     difftime
   })
@@ -106,7 +120,7 @@ getUPrice = function(dt) {
   portf %>% replace(is.na(.), 0) %>% group_by(date,symbol) %>% summarize(uPrice=max(undPrice)) %>% ungroup
 }
 
-getInstrumentName=function(sym,expdate,strike,type) {
+buildInstrumentName=function(sym,expdate,strike,type) {
   if_else(type=="Stock", "",{
     ## In case type already equals P or C, keep current value - otherwise replace by P for Put and C for Call
     right = case_match(type, "Put" ~"P","Call" ~"C",.default = type)
@@ -148,7 +162,7 @@ getTradeNr = function(v_instrument) {
   ### If at least one then retrieve corresponding trade nr
   ### And get the original trade date of the trade nr
   if (length(trade_nr) >1) {
-    message("There is more than one trade in Instrument argument!")
+    display_error_message("There is more than one trade in Instrument argument!")
     return(NA)
   }
   
@@ -256,10 +270,6 @@ getLastTickerData = function(ticker) {
 
 lastSPY=getLastTickerData("SPY")  ### Mkt value
 
-
-py_run_file("getContractValue.py")
-
-
 getVal=function(sym) {
   cat("No value for ",sym,"\n Enter new price: ")
   if (interactive()) val=readline(prompt="(interactive) ")
@@ -269,16 +279,27 @@ getVal=function(sym) {
 
 #### Used by Gonet.R script and RAnalysis
 stock_price = function(sec="STK",sym,currency,exchange="SMART",reqType=4) {
-  val=py$getStockValue(sec=sec,sym=sym,currency=currency,exchange=exchange,reqType=reqType)
-  print(paste("Stock value",sym,":",val))
+  #### Default value for security type is Stock
+  #### Default value for exchange is SMART
+  line=py$getStockValue(sec=sec,sym=sym,currency=currency,exchange=exchange,reqType=reqType)
   
   #### readline works only in interactive mode, 
   #### readLines works only in non-interactive mode
   ### Case where no IBKR connection exists (NULL) or no value returned
-  if (is.null(val)) val=getVal(sym)
-  else if (is.na(val)) val=getVal(sym)
+  ### isTRUE let is.na test works also if val=NULL
+  ### length(val) is TRUE when val=numeric(0)
+  if (is.null(line) || isTRUE(is.na(line))) {
+    val=getVal(sym)
+    #### Write data to CSV file as data input by end user or Yahoo
+    line=tibble(datetime=format(now(),"%e %b %Y %Hh%M"),sym=sym)
+    line$price=val
+    write.table(line,"C:/Users/aldoh/Documents/Global/prices.csv",sep=";",
+                row.names = FALSE,col.names = FALSE,append=TRUE)
+  }
+  val=line[["price"]]
+  print(paste0("DateTime:",line[["datetime"]], " Value: ",val))
   return(val)
-}
+} 
 
 #### CURRENCY management ##################
 
