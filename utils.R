@@ -2,7 +2,6 @@
 #### For all programs
 ###############   General purpose utility programs  ###################
 
-
 library(lubridate) ### for today() function
 library(readr)
 library(DescTools) ### for pgcd
@@ -52,12 +51,15 @@ reformat = function() {
 ##### Yahoo-based symbol lookup
 ### getSym is based upon quantmod getSymbols function
 
-
-getSym = function(sym){
+getSymFromDate = function(sym, date) {
   lookup_yahoo = c("ESTX50","MC","SPX","XSP")
   new_value= c("^STOXX50E","MC.PA","^SPX","^XSP")
   if (sym %in% lookup_yahoo) sym=new_value[which(sym == lookup_yahoo)]
-  return(getSymbols(sym,from=ymd("2023-01-03"),auto.assign = FALSE,warnings=FALSE))
+  return(getSymbols(sym,from=date,auto.assign = FALSE,warnings=FALSE))
+}
+
+getSym = function(sym){
+  getSymFromDate(sym,ymd("2023-01-03"))
 }
 
 getAdjReturns = function(sym) {
@@ -167,7 +169,7 @@ getTradeNr = function(v_instrument) {
   }
   
   print(trade_nr)
-  return(as.numeric(trade_nr))
+  return(trade_nr)
 }
 
 
@@ -225,12 +227,13 @@ getRnR = function(trade_nr) {
 ### Tries first on Yahoo (close price) - this works only for previous days, not for today
 ### THen on IBKR and if not available returns NA
 ### report_date can be a closed day -> then takes nearest day in the list
+### prices_list goes back only to begin of 2023 - so not suited for Gonet account
 getsymPrice = function(sym,currency,report_date){
-  prices_list=getPrice(getSym(sym))
   
   ### First case - requested date is an holiday
   ### Get last close price in this case
   if ((!isBusinessDay("UnitedStates",report_date)) | report_date < today()) {
+    prices_list=getPrice(getSymFromDate(sym,ymd("2023-01-03")))
     report_date = findNearestNumberOrDate(prices_list$date, report_date)
     price = filter(prices_list,date==report_date)
     return(price$value)
@@ -249,12 +252,12 @@ getsymPrice = function(sym,currency,report_date){
 ################################################################
 getLastTickerData = function(ticker) {
   if (is.null(ticker) |
-      ticker %in% c("","All")) return(list(last=NA,change=NA))
+      ticker %in% c("","All","STOCK")) return(list(last=NA,change=NA))
   
   ### Retrieve data from Yahoo Finance - no need to launch IBKR TWS
   ### Get last price and last change (J/J-1)
   tryCatch({
-    ticker=getSymbols(ticker,auto.assign=FALSE,from=today()-10,warnings=FALSE) ## Case Tuesday morning and US market not yet opened + Monday and Friday were off -> Get Wed and THur data
+    ticker=getSymFromDate(ticker,today()-10) ## Case Tuesday morning and US market not yet opened + Monday and Friday were off -> Get Wed and THur data
     names(ticker)[length(names(ticker))]="Adjusted" ### Last column is "ticker.Adjusted" -> to be renamed as Adjusted
     last_data=as.numeric(ticker[[nrow(ticker),"Adjusted"]])
     p_last_data=as.numeric(ticker[[nrow(ticker)-1,"Adjusted"]])
