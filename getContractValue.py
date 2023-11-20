@@ -19,7 +19,100 @@ def getPort():
     print("Port id:",port_id)
   return port_id
 
+def getStockValue(sec,sym,currency,exchange,reqType):
+  ### This function returns either:
+  ### -1 if contract does not exist or
+  ### NULL if no connection to IBKR and sym does not exist in prices.csv or
+  ### NA if price not available from market and sym does not exist in prices.csv or 
+  ### a dataframe with date and time, symbol and price + 
+  ###    store record into prices.cv file if new record
+  
+  ### Retrieve last prices for 'sym' if any
+  print("getStockValue")
+  stored_prices=pd.read_csv("C:/Users/aldoh/Documents/Global/prices.csv",sep=';')
+  line=stored_prices.loc[stored_prices['sym'] == sym]
+  
+  ### Take last line of lines if at least one
+  if not line.empty: 
+    line =line.iloc[-1]
+    limit_to_reload= datetime.datetime.now()-datetime.timedelta(minutes=60)
+    last_storage=datetime.datetime.strptime(line["datetime"],'%d %b %Y %Hh%M')
+    if last_storage > limit_to_reload:
+      return(line)
+  
+  ## Try to establish connection
+  ib = IB()
+  try:
+    ib.connect('127.0.0.1', 7496, clientId=getPort())    # use this one for TWS (Traders Workstation) acct mgt
+  except ConnectionError:
+    print("From IB: Connection error")
+    #### If no IB connection possible then return either last value or None
+    if not line.empty : return line
+    else : return None
+  
+  ##### INDIVIDUAL CONTRACTS
+  contract = Contract(symbol=sym,secType=sec,exchange=exchange,currency=currency) # Simple contract
+  print("\nContract:",contract)
+  
+  if(ib.qualifyContracts(contract)):
+    ib.reqMarketDataType(int(reqType)) ### Request type - Should be 2 or 4
+    [ticker] = ib.reqTickers(contract)
+    #print("\nTicker:",ticker)
+    value= ticker.marketPrice()
+    ib.sleep(1)
+    ib.disconnect()
+    ### If no value is returned (no market price available)
+    if(math.isnan(value)):
+    #### Either return last stored value if available or return NaN
+      print("from IB: NA")
+      if not line.empty : return line
+      else : return None
+  else:
+    ib.sleep(1)
+    ib.disconnect()
+    #### Contract does not exist
+    print("from IB:",-1)
+    return(pd.DataFrame({"price":[-1]}))
+  
+  print("from IB:",value)
+  ### Compute new record - data obtained from market
+  data= {
+    "datetime": [datetime.datetime.now().strftime("%e %b %Y %Hh%M")],
+    "sym":[sym],
+    "price":[value]
+  }
+  df=pd.DataFrame(data)
+  
+  #### New value available - then store it. If same as before, store it anyway because of new timestamp
+  df.to_csv("C:/Users/aldoh/Documents/Global/prices.csv", mode='a', header=False, sep=";", index=False)
+  return(df)
+
+def getCurrencyPairValue(currency_pair,reqType):
+  ib = IB()
+  try:
+    ib.connect('127.0.0.1', 7496, clientId=getPort())    # use this one for TWS (Traders Workstation) acct mgt
+  except ConnectionError:
+    return float('nan')
+
+  ##### INDIVIDUAL CONTRACTS
+  contract = Forex(currency_pair) # Simple contract
+  print("\nContract:",contract)
+  if(ib.qualifyContracts(contract)):
+    ib.reqMarketDataType(int(reqType)) ### Request type - Should be 2 or 4
+    [ticker] = ib.reqTickers(contract)
+    ib.sleep(1)
+    print("\nTicker:",ticker)
+    value= ticker.marketPrice()
+    print("\nValue:",value)
+  else: 
+    value=float('nan')
+  
+  ib.disconnect()
+  return(value)
+  
+
 def getOptValue(sym,expiration,strike,right,currency,exchange,tradingClass):
+  print("getOptValue")
   ib = IB()
   try:
     ib.connect('127.0.0.1', 7496, clientId=getPort())    # use this one for TWS (Traders Workstation) acct mgt
@@ -35,18 +128,53 @@ def getOptValue(sym,expiration,strike,right,currency,exchange,tradingClass):
     ib.reqMarketDataType(int(2))
     [ticker] = ib.reqTickers(contract)
     #print("\nTicker:",ticker)
-    ib.sleep(1)
     value= ticker.marketPrice()
+    ib.sleep(1)
+    if(math.isnan(value)):
+      #### Either return last stored value if available or return NaN
+        print("from IB: Opt price is NA")
+        value = None
     # greeks=ticker.modelGreeks  ### Another way to retrieve impliedVol
     # print("\nValue:",value)
     # print("\nImpliedVol:",greeks.impliedVol)
   else:
-    value = float('nan')  
+    value = None 
   
   ib.disconnect()
   return(value)
 
+def getStraddleValue(sym,expiration,strike,currency,exchange,tradingClass):
+  print("getStraddleValue")
+  ib = IB()
+  try:
+    ib.connect('127.0.0.1', 7496, clientId=getPort())    # use this one for TWS (Traders Workstation) acct mgt
+  except ConnectionError:
+    return None
+   
+  ##### INDIVIDUAL CONTRACTS
+  contract1 = Contract(symbol=sym,secType="OPT",lastTradeDateOrContractMonth=expiration,
+                      strike=strike,right="Put",exchange=exchange,currency=currency,tradingClass=tradingClass) # Simple contract
+  contract2 = Contract(symbol=sym,secType="OPT",lastTradeDateOrContractMonth=expiration,
+                      strike=strike,right="Call",exchange=exchange,currency=currency,tradingClass=tradingClass) # Simple contract
+  print("Contract:",contract1,contract2)
+  contract=[contract1,contract2]
+  if(ib.qualifyContracts(*contract)):
+    ib.reqMarketDataType(int(4))
+    ticker = ib.reqTickers(*contract)
+    #print("\nTicker:",ticker)
+    value= ticker[0].marketPrice()+ticker[1].marketPrice()
+    ib.sleep(1)
+    if(math.isnan(value)):
+      #### Either return last stored value if available or return NaN
+        print("from IB: Opt price is NA")
+        value = None
+  else:
+    value = None 
+  
+  ib.disconnect()
+  return(value)
 
+###################################  General functions about options chains ###############
 def find_nearest_number(numbers, target):
     if not numbers:
         raise ValueError("The list of numbers is empty.")
@@ -62,43 +190,6 @@ def find_nearest_number(numbers, target):
             nearest = number
     
     return nearest
-
-# def getOptExchangeList(sym,secType,currency,exchange):
-#   ib = IB()
-#   try:
-#     ib.connect('127.0.0.1', 7496, clientId=getPort())    # use this one for TWS (Traders Workstation) acct mgt
-#   except ConnectionError:
-#     return None
-#   
-#   underlying= Contract(symbol=sym,secType=secType,
-#                       exchange=exchange,currency=currency) # Simple contract may be an index or stock
-#   if (ib.qualifyContracts(underlying)):
-#     chains = ib.reqSecDefOptParams(sym, '', underlying.secType, underlying.conId)
-#     ib.sleep(1)
-#     opt_exchange_list = [c.exchange for c in chains]
-#   else: opt_exchange_list=float('nan')
-# 
-#   ib.disconnect()
-# 
-#   return opt_exchange_list
-# 
-# def getTradingClassList(sym,secType,currency,exchangeSec,exchangeOpt):
-#   ib = IB()
-#   try:
-#     ib.connect('127.0.0.1', 7496, clientId=getPort())    # use this one for TWS (Traders Workstation) acct mgt
-#   except ConnectionError:
-#     return None
-#     
-#   underlying= Contract(symbol=sym,secType=secType,
-#                       exchange=exchangeSec,currency=currency) # Simple contract may be an index or stock
-#   if (ib.qualifyContracts(underlying)):
-#     chains = ib.reqSecDefOptParams(sym, '', underlying.secType, underlying.conId)
-#     ib.sleep(1)
-#     tradingClass_list = [c.tradingClass for c in chains if c.exchange==exchangeOpt]
-#   else: tradingClass_list=float('nan')
-#   
-#   ib.disconnect()
-#   return tradingClass_list
 
 
 def getChains(sym,secType,currency,exchangeSec):
@@ -208,91 +299,7 @@ def getStrikesfromExpDate(sym,currency,exchange,tradingClass,expdate,strikes):
 
   return(updated_strikes)
 
-def getStockValue(sec,sym,currency,exchange,reqType):
-  ### This function returns either:
-  ### -1 if contract does not exist or
-  ### NULL if no connection to IBKR and sym does not exist in prices.csv or
-  ### NA if price not available from market and sym does not exist in prices.csv or 
-  ### a dataframe with date and time, symbol and price + 
-  ###    store record into prices.cv file if new record
-  
-  ### Retrieve last prices for 'sym' if any
-  stored_prices=pd.read_csv("C:/Users/aldoh/Documents/Global/prices.csv",sep=';')
-  line=stored_prices.loc[stored_prices['sym'] == sym]
-  
-  ### Take last line of lines if at least one
-  if not line.empty: line =line.iloc[-1]
-   
-  ## Try to establish connection
-  ib = IB()
-  try:
-    ib.connect('127.0.0.1', 7496, clientId=getPort())    # use this one for TWS (Traders Workstation) acct mgt
-  except ConnectionError:
-    print("From IB: Connection error")
-    #### If no IB connection possible then return either last value or None
-    if not line.empty : return line
-    else : return None
-  
-  ##### INDIVIDUAL CONTRACTS
-  contract = Contract(symbol=sym,secType=sec,exchange=exchange,currency=currency) # Simple contract
-  print("\nContract:",contract)
-  
-  if(ib.qualifyContracts(contract)):
-    ib.reqMarketDataType(int(reqType)) ### Request type - Should be 2 or 4
-    [ticker] = ib.reqTickers(contract)
-    ib.sleep(1)
-    #print("\nTicker:",ticker)
-    value= ticker.marketPrice()
-    ib.disconnect()
-    ### If no value is returned (no market price available)
-    if(math.isnan(value)):
-    #### Either return last stored value if available or return NaN
-      print("from IB: NA")
-      if not line.empty : return line
-      else : return float('nan')
-  else:
-    ib.sleep(1)
-    ib.disconnect()
-    #### Contract does not exist
-    print("from IB:",-1)
-    return(pd.DataFrame({"price":[-1]}))
-  
-  print("from IB:",value)
-  ### Compute new record - data obtained from market
-  data= {
-    "datetime": [datetime.datetime.now().strftime("%e %b %Y %Hh%M")],
-    "sym":[sym],
-    "price":[value]
-  }
-  df=pd.DataFrame(data)
-  
-  #### New value available - then store it. If same as before, store it anyway because of new timestamp
-  df.to_csv("C:/Users/aldoh/Documents/Global/prices.csv", mode='a', header=False, sep=";", index=False)
-  return(df)
 
-def getCurrencyPairValue(currency_pair,reqType):
-  ib = IB()
-  try:
-    ib.connect('127.0.0.1', 7496, clientId=getPort())    # use this one for TWS (Traders Workstation) acct mgt
-  except ConnectionError:
-    return float('nan')
-
-  ##### INDIVIDUAL CONTRACTS
-  contract = Forex(currency_pair) # Simple contract
-  print("\nContract:",contract)
-  if(ib.qualifyContracts(contract)):
-    ib.reqMarketDataType(int(reqType)) ### Request type - Should be 2 or 4
-    [ticker] = ib.reqTickers(contract)
-    ib.sleep(1)
-    print("\nTicker:",ticker)
-    value= ticker.marketPrice()
-    print("\nValue:",value)
-  else: 
-    value=float('nan')
-  
-  ib.disconnect()
-  return(value)
-  
 # def getimpliedVol(sym,secType,date,price,currency,exchange,reqType):
 #   print("getimpliedVol: ",sym,secType,date,price,currency,exchange,reqType)
 #   ib = IB()
@@ -329,6 +336,43 @@ def getCurrencyPairValue(currency_pair,reqType):
 #   print("\nImpliedVol:",value)
 #   ib.disconnect()
 #   return(value)
+
+# def getOptExchangeList(sym,secType,currency,exchange):
+#   ib = IB()
+#   try:
+#     ib.connect('127.0.0.1', 7496, clientId=getPort())    # use this one for TWS (Traders Workstation) acct mgt
+#   except ConnectionError:
+#     return None
+#   
+#   underlying= Contract(symbol=sym,secType=secType,
+#                       exchange=exchange,currency=currency) # Simple contract may be an index or stock
+#   if (ib.qualifyContracts(underlying)):
+#     chains = ib.reqSecDefOptParams(sym, '', underlying.secType, underlying.conId)
+#     ib.sleep(1)
+#     opt_exchange_list = [c.exchange for c in chains]
+#   else: opt_exchange_list=float('nan')
+# 
+#   ib.disconnect()
+# 
+#   return opt_exchange_list
+# 
+# def getTradingClassList(sym,secType,currency,exchangeSec,exchangeOpt):
+#   ib = IB()
+#   try:
+#     ib.connect('127.0.0.1', 7496, clientId=getPort())    # use this one for TWS (Traders Workstation) acct mgt
+#   except ConnectionError:
+#     return None
+#     
+#   underlying= Contract(symbol=sym,secType=secType,
+#                       exchange=exchangeSec,currency=currency) # Simple contract may be an index or stock
+#   if (ib.qualifyContracts(underlying)):
+#     chains = ib.reqSecDefOptParams(sym, '', underlying.secType, underlying.conId)
+#     ib.sleep(1)
+#     tradingClass_list = [c.tradingClass for c in chains if c.exchange==exchangeOpt]
+#   else: tradingClass_list=float('nan')
+#   
+#   ib.disconnect()
+#   return tradingClass_list
 
 
 
