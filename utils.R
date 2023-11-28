@@ -14,6 +14,9 @@ library(reticulate)
 py_run_file("getContractValue.py")
 print("Python functions loaded!")
 
+
+##########################  General purposes utilities ##########
+
 ################  Display error message
 
 display_error_message = function(error_msg) {
@@ -36,9 +39,8 @@ pgcd = function(x) {
 ##### reformat function is to be used to convert a CSV file 
 ##### separated by commas into CSV separated by semi-columns
 reformat = function() {
-  NewTrading="C:\\Users\\aldoh\\Documents\\NewTrading\\"
-  file=paste0(NewTrading,"Trades.csv")
-  new_file=paste0(NewTrading,"NewTrades.csv")
+  file="C:\\Users\\aldoh\\Documents\\NewTrading\\Trades.csv"
+  new_file="C:\\Users\\aldoh\\Documents\\NewTrading\\NewTrades.csv"
   trade=read.delim(file,check.names = TRUE,sep=",")
   col_file=c("TradeNr","Account","TradeDate","Thème","Instrument","Ssjacent","Pos","Prix","Comm.",
              "Total","Exp.Date","Risk","Reward","PnL","Statut","Currency","Remarques")
@@ -46,34 +48,7 @@ reformat = function() {
   write.table(trade,new_file,sep=";",row.names=F,fileEncoding = "UTF-8")
 }
 
-##########################  General purposes utilities ##########
 
-##### Yahoo-based symbol lookup
-### getSym is based upon quantmod getSymbols function
-
-getSymFromDate = function(sym, date) {
-  lookup_yahoo = c("ESTX50","MC","SPX","XSP")
-  new_value= c("^STOXX50E","MC.PA","^SPX","^XSP")
-  if (sym %in% lookup_yahoo) sym=new_value[which(sym == lookup_yahoo)]
-  return(getSymbols(sym,from=date,auto.assign = FALSE,warnings=FALSE))
-}
-
-getSym = function(sym){
-  getSymFromDate(sym,ymd("2023-01-03"))
-}
-
-getAdjReturns = function(sym) {
-  returns=data.frame(date=as.Date(index(sym)), 
-                   return=c('NA',round(diff(log(coredata(coredata(sym[,6])))),3)))
-  colnames(price)=c("date","return")
-  return(returns)
-}
-
-getPrice= function(sym) {
-    price=data.frame(date=as.Date(index(sym)), value=coredata(sym[,6]))
-    colnames(price)=c("date","value")
-    return(price)
-}
 
 
 findNearestNumberOrDate = function(numbers, target) {
@@ -90,6 +65,7 @@ findNearestNumberOrDate = function(numbers, target) {
   return(nearest)
 }
 
+##### Utilities to work on Trades.csv file or options (getDTE)  ###################
 #### Utilities - no real relation with options computation 
 getDTE = function(c_datetime,exp_date) {
   if_else(is.na(exp_date),NA, {
@@ -107,49 +83,61 @@ getDTE = function(c_datetime,exp_date) {
   })
 }
 
-## Compare symbol, expiration date and position - 
-## price cannot be used as combined spread (vertical) may exist in portfolio files
-### dt contains symbol, date, avgCost, pos
-getUPrice = function(dt) {
-  portf1= data.frame(read.csv("C:\\Users\\aldoh\\Documents\\NewTrading\\U1804173.csv",sep=";"))
-  portf2= data.frame(read.csv("C:\\Users\\aldoh\\Documents\\NewTrading\\DU5221795.csv",sep=";"))
-  portf=rbind(portf1,portf2)
-  
-  ### Convert from European date format to internal R date format
-  portf$date=as.Date(portf$date,format="%d.%m.%Y") 
-  
-  portf = right_join(portf,dt,by=c("symbol"="sym","date"))
-  portf %>% replace(is.na(.), 0) %>% group_by(date,symbol) %>% summarize(uPrice=max(undPrice)) %>% ungroup
-}
 
 buildInstrumentName=function(sym,expdate,strike,type) {
-  if_else(type=="Stock", "",{
+  ### If type is neither P,C, Put or Call then returns sym name
+  if_else(type %in% c("P","C","Put","Call"), {
+    #### expdate must be a date
+    stopifnot("expdate must be a date!" = is.Date(expdate))
+    
     ## In case type already equals P or C, keep current value - otherwise replace by P for Put and C for Call
     right = case_match(type, "Put" ~"P","Call" ~"C",.default = type)
+    
+    #### Instrument string is built using English - i.e. non locale date names
+    #### This is necessary as Instrument name must follow IBKR format (to match strings in Trades.csv file)
+    #### First retrieve current locale and save it
     loc= Sys.getlocale("LC_TIME")
+    ### Apply locale used by IBKR to build instrument expiration date
     Sys.setlocale("LC_TIME","English")
+    
     expdate=str_to_upper(format(expdate,"%d%b%y"))
+    ### Re-load previous locale
     Sys.setlocale("LC_TIME",loc)
     paste(sym,expdate,strike,right)
-  } )
+  },sym )
+}
+
+### For office laptop
+###file="C:\\Users\\martinale\\Documents\\RProjects\\RAnalysis\\Trading\\Trades.csv"
+
+### This function work only for IBKR accounts not for Gonet account
+getAllTrades = function() {
+  suppressMessages(read_delim(file="C:\\Users\\aldoh\\Documents\\NewTrading\\Trades.csv",
+                                     delim=";",locale=locale(date_names="en",decimal_mark=".",
+                                                             grouping_mark="",encoding="UTF-8")))
+}
+
+### This function work only for IBKR accounts not for Gonet account
+getAllCurrencyPairs = function() {
+  suppressMessages(read_delim(file="C:\\Users\\aldoh\\Documents\\NewTrading\\CurrencyPairs.csv",
+                                     delim=";",locale=locale(date_names="en",decimal_mark=".",
+                                                             grouping_mark="",encoding="UTF-8")))
 }
 
 getTradeNr = function(v_instrument) {
-  message("getTradeNr")
   if(length(v_instrument)==0) return(NA)
   if (is.unsorted(v_instrument)) stop("Instrument must be sorted - prog. error")
   ### Read Trades.csv file and extract open/adjusted trades, to select all instruments present in dt argument
-  trades= data.frame(read.csv("C:\\Users\\aldoh\\Documents\\NewTrading\\Trades.csv",sep=";"))
-  ###trades=data.frame(read.csv("C:\\Users\\martinale\\Documents\\RProjects\\RAnalysis\\Trading\\Trades.csv",sep=";"))
-  
+  trades=getAllTrades()
   trades %<>% filter(Statut=="Ouvert" | Statut=="Ajusté")
   trades %<>% select(Instrument,TradeNr)
  
   ### Retrieve dates in trades.csv corresponding to instruments of dt
   ### If there are several dates for the same instrument, take the oldest one (min)
-  trade_nr=left_join(as.data.frame(list(Instrument=v_instrument)),trades)  %>% 
+  ### Suppress join by message
+  trade_nr=suppressMessages(left_join(as.data.frame(list(Instrument=v_instrument)),trades)  %>% 
     group_by(Instrument) %>% 
-    pull(TradeNr)
+    pull(TradeNr))
   
   ### If all instrument are NA -> trade is not present - not yet recorded in Trades.csv
   if (length(trade_nr)==0) {
@@ -164,20 +152,19 @@ getTradeNr = function(v_instrument) {
   ### If at least one then retrieve corresponding trade nr
   ### And get the original trade date of the trade nr
   if (length(trade_nr) >1) {
-    display_error_message("There is more than one trade in Instrument argument!")
+    display_error_message("There is more than one trade in Instrument argument! Display oldest trade nr")
     return(NA)
   }
   
-  print(trade_nr)
-  return(trade_nr)
+  message("getTradeNr: ",trade_nr)
+  return(as.integer(trade_nr))
 }
 
 
 getOpenDate = function(trade_nr) {
-  message("getOpenDate")
   
-  trades= data.frame(read.csv("C:\\Users\\aldoh\\Documents\\NewTrading\\Trades.csv",sep=";"))
-  ###trades=data.frame(read.csv("C:\\Users\\martinale\\Documents\\RProjects\\RAnalysis\\Trading\\Trades.csv",sep=";"))
+  stopifnot("trade_nr must be a numeric" = is.numeric(trade_nr))
+  trades=getAllTrades()
   
   trades %<>% filter(TradeNr==trade_nr)
   if (nrow(trades)==0) {
@@ -195,18 +182,19 @@ getOpenDate = function(trade_nr) {
   ### If there are several dates for the trade nr (adjusted case), take the oldest one (min)
   orig_trade_date=suppressWarnings(min(trade_dates,na.rm=T))
   
-  print(orig_trade_date)
-  return(as.Date(orig_trade_date))
+  message("getOpenDate: ",trade_nr," orig_date: ",format(orig_trade_date,"%d-%m-%Y"))
+  return(orig_trade_date)
 }
 
 ### Returns a number - sum of rewards (non-NA) for all given instruments that are Open/adjusted
 getRnR = function(trade_nr) {
   message("getRnR - Reward and Risk")
+  stopifnot("trade_nr must be a numeric" = is.numeric(trade_nr))
+  
   ##if (is.unsorted(v_instrument)) stop("Instrument must be sorted - prog. error")
   ### Read Trades.csv file and extract open/adjusted trades, to select all instruments present in dt argument
-  trades= data.frame(read.csv("C:\\Users\\aldoh\\Documents\\NewTrading\\Trades.csv",sep=";"))
-  ### For office laptop
-  ###trades=data.frame(read.csv("C:\\Users\\martinale\\Documents\\RProjects\\RAnalysis\\Trading\\Trades.csv",sep=";"))
+  trades=getAllTrades()
+  
   trades %<>% filter(TradeNr==trade_nr)
   if (nrow(trades)==0) {
     display_error_message("Trade does not exist!")
@@ -223,6 +211,40 @@ getRnR = function(trade_nr) {
   #print(RnR)
   return(RnR)
 }
+
+###################  Retrieve prices functions #######################
+
+##### Yahoo-based symbol lookup
+### getSym is based upon quantmod getSymbols function
+
+#### auto.assign=TRUE is necessary if multiple symbols at the same time
+getSymFromDate = function(sym, date) {
+  lookup_yahoo = c("ESTX50"="^STOXX50E","MC"="MC.PA","OR"="OR.PA","TTE"="TTE.PA","AI"="AI.PA",
+                   "SPX"="^SPX","XSP"="^XSP","NESN"="NESN.SW","HOLN"="HOLN.SW","SLHN"="SLHN.SW")
+  sym=if_else(sym %in% names(lookup_yahoo), lookup_yahoo[sym], sym)
+  lapply(sym, function(x) { getSymbols(x,from=date,auto.assign = F,warnings=FALSE)})
+}
+
+getSym = function(sym){
+  getSymFromDate(sym,ymd("2023-01-03"))
+}
+
+# getAdjReturns = function(sym) {
+#   returns=data.frame(date=as.Date(index(sym)), 
+#                      return=c('NA',round(diff(log(coredata(coredata(sym[,6])))),3)))
+#   colnames(price)=c("date","return")
+#   return(returns)
+# }
+
+getPrice= function(sym_list) {
+  ### Takes only the first element of the sym list
+  ### This is for compatibility with getSymFromDate
+  sym=sym_list[[1]]
+  price=data.frame(date=as.Date(index(sym)), value=coredata(sym[,6]))
+  colnames(price)=c("date","value")
+  return(price)
+}
+
 
 ### Tries first on Yahoo (close price) - this works only for previous days, not for today
 ### THen on IBKR and if not available returns NA
@@ -248,19 +270,41 @@ getsymPrice = function(sym,currency,report_date){
   return(stock_price(sec,sym,currency,exchange,reqType=4))
   
 }
-  
-################################################################
+
+### Takes last open date if current date provided does not work
+getLastAdjustedPrice = function(ticker) {
+  if_else( (is.null(ticker) | ticker %in% c("","All","STOCK")),
+      NA,
+      {
+        ## Case date is Tuesday morning and US market not yet opened + Monday and Friday were off -> Get THur data
+        ### This returns all last data available
+        ticker=getSymFromDate(ticker,today()-5) 
+        ### Last column is "ticker.Adjusted"
+        sapply(ticker, function(x) round(x[[nrow(x),6]],2))
+      }
+  )      
+}
+
+
+getLastPriceDate = function(ticker) {
+  if_else( (is.null(ticker) | ticker %in% c("","All","STOCK")),
+           NA,
+           {ticker=getSymFromDate(ticker,today()-5) 
+           ### Last column is "ticker.Adjusted" -> to be renamed as Adjusted
+           sapply(ticker,function(x) format(index(x[nrow(x)]),"%d.%m.%Y"))
+           })
+}
+
+### Retrieve data from Yahoo Finance - no need to launch IBKR TWS
+### Get last price and last change (J/J-1)
 getLastTickerData = function(ticker) {
   if (is.null(ticker) |
       ticker %in% c("","All","STOCK")) return(list(last=NA,change=NA))
-  
-  ### Retrieve data from Yahoo Finance - no need to launch IBKR TWS
-  ### Get last price and last change (J/J-1)
   tryCatch({
-    ticker=getSymFromDate(ticker,today()-10) ## Case Tuesday morning and US market not yet opened + Monday and Friday were off -> Get Wed and THur data
-    names(ticker)[length(names(ticker))]="Adjusted" ### Last column is "ticker.Adjusted" -> to be renamed as Adjusted
-    last_data=as.numeric(ticker[[nrow(ticker),"Adjusted"]])
-    p_last_data=as.numeric(ticker[[nrow(ticker)-1,"Adjusted"]])
+    ticks=getSymFromDate(ticker,today()-5)[[1]] ## Case Tuesday morning and US market not yet opened + Monday and Friday were off -> Get Wed and THur data
+    ##names(ticks)[length(names(ticks))]="Adjusted" ### Last column is "ticker.Adjusted" -> to be renamed as Adjusted
+    last_data=ticks[[nrow(ticks),6]]
+    p_last_data=ticks[[nrow(ticks)-1,6]]
     return(list(
       last=round(last_data,2),
       change=label_percent(accuracy=0.01)(last_data/p_last_data-1)
@@ -275,7 +319,18 @@ lastSPY=getLastTickerData("SPY")  ### Mkt value
 
 getVal=function(sym) {
   cat("No value for ",sym,"\n Enter new price: ")
-  if (interactive()) val=readline(prompt="(interactive) ")
+  if (interactive()) {
+    ## display_error_message(paste0("No value for",sym," You need to enter a new price"))
+    # showModal(modalDialog(
+    #   tags$h2('No value for Please enter your personal information'),
+    #   numericInput('val', 'Value'),
+    #   footer=tagList(
+    #     actionButton('submit', 'Submit'),
+    #     modalButton('cancel')
+    #   )
+    # ))
+  val=readline(prompt="(interactive) ")
+  }
   else val= readLines(con="stdin", n=1)[[1]]
   as.double(val)
 }
@@ -284,6 +339,9 @@ getVal=function(sym) {
 stock_price = function(sec="STK",sym,currency,exchange="SMART",reqType=4) {
   #### Default value for security type is Stock
   #### Default value for exchange is SMART
+  message("stock_price")
+  ### Special case for CSBGU0 stock I won in Gonet portfolio
+  if (sym == "CSBGU0") reqType=3
   line=py$getStockValue(sec=sec,sym=sym,currency=currency,exchange=exchange,reqType=reqType)
   
   #### readline works only in interactive mode, 
@@ -291,13 +349,13 @@ stock_price = function(sec="STK",sym,currency,exchange="SMART",reqType=4) {
   ### Case where no IBKR connection exists (NULL) or no value returned
   ### isTRUE let is.na test works also if val=NULL
   ### length(val) is TRUE when val=numeric(0)
-  if (is.null(line) || isTRUE(is.na(line))) {
+  if (is.null(line)) {
     val=getVal(sym)
     #### Write data to CSV file as data input by end user or Yahoo
     line=tibble(datetime=format(now(),"%e %b %Y %Hh%M"),sym=sym)
     line$price=val
     write.table(line,"C:/Users/aldoh/Documents/Global/prices.csv",sep=";",
-                row.names = FALSE,col.names = FALSE,append=TRUE)
+                row.names = FALSE,quote=F,col.names = FALSE,append=TRUE)
   }
   val=line[["price"]]
   print(paste0("DateTime:",line[["datetime"]], " Value: ",val))
@@ -309,46 +367,18 @@ stock_price = function(sec="STK",sym,currency,exchange="SMART",reqType=4) {
 ### The 2 lines below will not work with "from=today()" between 00:00 and 6:00am 
 ### as Europe is one day after the US between this time period and Yahoo server is located in the US
 
-# euro_usd = xts(1.10,order.by = today())
-# chf_usd = xts(1.12,order.by=today())
-
-# euro_usd = xts({
-#   message("Enter 1 euro in USD")
-#   readline(prompt=">> ")}
-#   ,order.by = today())
-# 
-# chf_usd = xts({
-#   message("Enter 1 CHF in USD")
-#   readline(prompt=">> ")}
-#   ,order.by=today())
-
-
-# suppressWarnings({
-#   euro=getSymbols("EURUSD=X",from=s_date,warnings=FALSE, auto.assign = FALSE)[,6]
-#   euro=data.frame(date=as.Date(index(euro)),EUR=as.numeric(euro))
-# 
-#   ### Suppress strange things if the last 2 dates are equal then remove last line
-#   test_euro=tail(euro,2)
-#   if (nrow(test_euro) >=2) {if (test_euro[1,]$date == test_euro[2,]$date) euro=head(euro,-1)}
-# 
-#   chf=getSymbols("CHFUSD=X",from=s_date,warnings=FALSE, auto.assign = FALSE)[,6]
-#   chf=data.frame(date=as.Date(index(chf)),CHF=as.numeric(chf))
-# 
-#   ### Suppress strange things if the last 2 dates are equal then remove last line
-#   test_chf=tail(chf,2)
-#   if (nrow(test_chf) >=2) {if (test_chf[1,]$date == test_chf[2,]$date) chf=head(chf,-1)}
-# })
-
 getCurrencyPairs = function() {
   message("getCurrencyPairs")
   ### euro_usd and chf_usd data frames - values for the day- are already retrieved
-  usd=read.csv("C:/Users/aldoh/Documents/NewTrading/CurrencyPairs.csv",sep=";")
+  usd=getAllCurrencyPairs()
+
   ### Convert string to date
-  usd$date=ymd(usd$date)
+  last_usd=last(usd)
+  last_date=ymd(last_usd$date)
   
-  if (usd$date == today())  {
+  if (last_date == today())  {
     #print(usd)
-    return(usd)
+    return(last_usd)
   }
   
   EUR = py$getCurrencyPairValue("EURUSD",reqType=2)
@@ -362,7 +392,7 @@ getCurrencyPairs = function() {
   usd = data.frame(date=today(),EUR=EUR,CHF=CHF)
   #print(usd)
   
-  write.table(usd,"C:/Users/aldoh/Documents/NewTrading/CurrencyPairs.csv",sep=";",dec=".",row.names=F)
+  write.table(usd,"C:/Users/aldoh/Documents/NewTrading/CurrencyPairs.csv",sep=";",dec=".",row.names=F,append=T,col.names=F)
   return(usd)
 }
 
@@ -394,19 +424,13 @@ currency_format = function(amount,currency){
   })
 }
 
-# currency_convert(100,"CHF")
-# currency_convert(110,"EUR")
-# currency_convert(120,"USD")
-# as.numeric(map2(c(100,110,120),c("CHF","EUR","USD"),currency_convert))
-
-
 ### Converts the amount of currency into USD, using getCurrencyPairs
 currency_convert = function(amount,currency) {
   ### Suppress warning that close is only current close and not final one for today
   usd=getCurrencyPairs()
-  cur_convert= switch(currency, "EUR"=usd$EUR,
-                      "CHF"=usd$CHF,
-                      "USD"=1)
+  cur_convert= case_match(currency, "EUR"~usd$EUR,
+                      "CHF"~usd$CHF,
+                      "USD"~1)
   
   cur_convert*amount
 }
@@ -419,22 +443,36 @@ convert_to_usd = function(amount,currency,EUR,CHF) {
                    "USD" ~amount),2)
 }
 
+convert_to_usd_date = function(amount,currency,date) {
+  usd=usd=getAllCurrencyPairs()
+  usd$date=ymd(usd$date)
+  
+  input=tibble(amount,currency,date)
+  
+  ### Retrieve at a given date
+  data=left_join(input,usd)
+  convert_to_usd(data$amount,data$currency,data$EUR,data$CHF)
+  
+}
+
+### Test data
+# amount=c(100,120,110)
+# currency=c("CHF","USD","EUR")
+# date=ymd(c(20231110,20231109,20231115))
+# 
 
 
-###########  Compute option price based on combo ############
-#### This has been replaced by getBSComboPrice
-
-# positions=data.frame(type="P",expiration=ymd("2023-02-17"),strike=80.0)
-# positions=add_row(positions,type="P",expiration=ymd("2023-02-17"),strike=90.0)
-# positions=add_row(positions,type="P",expiration=ymd("2023-04-21"),strike=100.0)
-# positions=add_row(positions,type="C",expiration=ymd("2023-03-21"),strike=100.0)
-
-# compute_opt_price = function(positions, price, vol,days){
-#   mutate(positions,p_price= if_else(
-#     type=="P", getBSPutPrice(S=price,K=positions$strike,r=interest_rate,
-#                              DTE=as.numeric(ymd(positions$expiration)-today()-days),
-#                              sig=vol),
-#     getBSCallPrice(S=price,K=positions$strike,r=interest_rate,
-#                    DTE=as.numeric(ymd(positions$expiration)-today()-days),sig=vol)))
+## Compare symbol, expiration date and position - 
+## price cannot be used as combined spread (vertical) may exist in portfolio files
+### dt contains symbol, date, avgCost, pos
+# getUPrice = function(dt) {
+#   portf1= data.frame(read.csv("C:\\Users\\aldoh\\Documents\\NewTrading\\U1804173.csv",sep=";"))
+#   portf2= data.frame(read.csv("C:\\Users\\aldoh\\Documents\\NewTrading\\DU5221795.csv",sep=";"))
+#   portf=rbind(portf1,portf2)
+#   
+#   ### Convert from European date format to internal R date format
+#   portf$date=as.Date(portf$date,format="%d.%m.%Y") 
+#   
+#   portf = right_join(portf,dt,by=c("symbol"="sym","date"))
+#   portf %>% replace(is.na(.), 0) %>% group_by(date,symbol) %>% summarize(uPrice=max(undPrice)) %>% ungroup
 # }
-
