@@ -39,9 +39,8 @@ pgcd = function(x) {
 ##### reformat function is to be used to convert a CSV file 
 ##### separated by commas into CSV separated by semi-columns
 reformat = function() {
-  NewTrading="C:\\Users\\aldoh\\Documents\\NewTrading\\"
-  file=paste0(NewTrading,"Trades.csv")
-  new_file=paste0(NewTrading,"NewTrades.csv")
+  file="C:\\Users\\aldoh\\Documents\\NewTrading\\Trades.csv"
+  new_file="C:\\Users\\aldoh\\Documents\\NewTrading\\NewTrades.csv"
   trade=read.delim(file,check.names = TRUE,sep=",")
   col_file=c("TradeNr","Account","TradeDate","Thème","Instrument","Ssjacent","Pos","Prix","Comm.",
              "Total","Exp.Date","Risk","Reward","PnL","Statut","Currency","Remarques")
@@ -84,49 +83,61 @@ getDTE = function(c_datetime,exp_date) {
   })
 }
 
-## Compare symbol, expiration date and position - 
-## price cannot be used as combined spread (vertical) may exist in portfolio files
-### dt contains symbol, date, avgCost, pos
-# getUPrice = function(dt) {
-#   portf1= data.frame(read.csv("C:\\Users\\aldoh\\Documents\\NewTrading\\U1804173.csv",sep=";"))
-#   portf2= data.frame(read.csv("C:\\Users\\aldoh\\Documents\\NewTrading\\DU5221795.csv",sep=";"))
-#   portf=rbind(portf1,portf2)
-#   
-#   ### Convert from European date format to internal R date format
-#   portf$date=as.Date(portf$date,format="%d.%m.%Y") 
-#   
-#   portf = right_join(portf,dt,by=c("symbol"="sym","date"))
-#   portf %>% replace(is.na(.), 0) %>% group_by(date,symbol) %>% summarize(uPrice=max(undPrice)) %>% ungroup
-# }
 
 buildInstrumentName=function(sym,expdate,strike,type) {
-  if_else(type=="Stock", "",{
+  ### If type is neither P,C, Put or Call then returns sym name
+  if_else(type %in% c("P","C","Put","Call"), {
+    #### expdate must be a date
+    stopifnot("expdate must be a date!" = is.Date(expdate))
+    
     ## In case type already equals P or C, keep current value - otherwise replace by P for Put and C for Call
     right = case_match(type, "Put" ~"P","Call" ~"C",.default = type)
+    
+    #### Instrument string is built using English - i.e. non locale date names
+    #### This is necessary as Instrument name must follow IBKR format (to match strings in Trades.csv file)
+    #### First retrieve current locale and save it
     loc= Sys.getlocale("LC_TIME")
+    ### Apply locale used by IBKR to build instrument expiration date
     Sys.setlocale("LC_TIME","English")
+    
     expdate=str_to_upper(format(expdate,"%d%b%y"))
+    ### Re-load previous locale
     Sys.setlocale("LC_TIME",loc)
     paste(sym,expdate,strike,right)
-  } )
+  },sym )
+}
+
+### For office laptop
+###file="C:\\Users\\martinale\\Documents\\RProjects\\RAnalysis\\Trading\\Trades.csv"
+
+### This function work only for IBKR accounts not for Gonet account
+getAllTrades = function() {
+  suppressMessages(read_delim(file="C:\\Users\\aldoh\\Documents\\NewTrading\\Trades.csv",
+                                     delim=";",locale=locale(date_names="en",decimal_mark=".",
+                                                             grouping_mark="",encoding="UTF-8")))
+}
+
+### This function work only for IBKR accounts not for Gonet account
+getAllCurrencyPairs = function() {
+  suppressMessages(read_delim(file="C:\\Users\\aldoh\\Documents\\NewTrading\\CurrencyPairs.csv",
+                                     delim=";",locale=locale(date_names="en",decimal_mark=".",
+                                                             grouping_mark="",encoding="UTF-8")))
 }
 
 getTradeNr = function(v_instrument) {
-  message("getTradeNr")
   if(length(v_instrument)==0) return(NA)
   if (is.unsorted(v_instrument)) stop("Instrument must be sorted - prog. error")
   ### Read Trades.csv file and extract open/adjusted trades, to select all instruments present in dt argument
-  trades= data.frame(read.csv("C:\\Users\\aldoh\\Documents\\NewTrading\\Trades.csv",sep=";"))
-  ###trades=data.frame(read.csv("C:\\Users\\martinale\\Documents\\RProjects\\RAnalysis\\Trading\\Trades.csv",sep=";"))
-  
+  trades=getAllTrades()
   trades %<>% filter(Statut=="Ouvert" | Statut=="Ajusté")
   trades %<>% select(Instrument,TradeNr)
  
   ### Retrieve dates in trades.csv corresponding to instruments of dt
   ### If there are several dates for the same instrument, take the oldest one (min)
-  trade_nr=left_join(as.data.frame(list(Instrument=v_instrument)),trades)  %>% 
+  ### Suppress join by message
+  trade_nr=suppressMessages(left_join(as.data.frame(list(Instrument=v_instrument)),trades)  %>% 
     group_by(Instrument) %>% 
-    pull(TradeNr)
+    pull(TradeNr))
   
   ### If all instrument are NA -> trade is not present - not yet recorded in Trades.csv
   if (length(trade_nr)==0) {
@@ -145,16 +156,15 @@ getTradeNr = function(v_instrument) {
     return(NA)
   }
   
-  print(trade_nr)
-  return(trade_nr)
+  message("getTradeNr: ",trade_nr)
+  return(as.integer(trade_nr))
 }
 
 
 getOpenDate = function(trade_nr) {
-  message("getOpenDate")
   
-  trades= data.frame(read.csv("C:\\Users\\aldoh\\Documents\\NewTrading\\Trades.csv",sep=";"))
-  ###trades=data.frame(read.csv("C:\\Users\\martinale\\Documents\\RProjects\\RAnalysis\\Trading\\Trades.csv",sep=";"))
+  stopifnot("trade_nr must be a numeric" = is.numeric(trade_nr))
+  trades=getAllTrades()
   
   trades %<>% filter(TradeNr==trade_nr)
   if (nrow(trades)==0) {
@@ -172,18 +182,19 @@ getOpenDate = function(trade_nr) {
   ### If there are several dates for the trade nr (adjusted case), take the oldest one (min)
   orig_trade_date=suppressWarnings(min(trade_dates,na.rm=T))
   
-  print(orig_trade_date)
-  return(as.Date(orig_trade_date))
+  message("getOpenDate: ",trade_nr," orig_date: ",format(orig_trade_date,"%d-%m-%Y"))
+  return(orig_trade_date)
 }
 
 ### Returns a number - sum of rewards (non-NA) for all given instruments that are Open/adjusted
 getRnR = function(trade_nr) {
   message("getRnR - Reward and Risk")
+  stopifnot("trade_nr must be a numeric" = is.numeric(trade_nr))
+  
   ##if (is.unsorted(v_instrument)) stop("Instrument must be sorted - prog. error")
   ### Read Trades.csv file and extract open/adjusted trades, to select all instruments present in dt argument
-  trades= data.frame(read.csv("C:\\Users\\aldoh\\Documents\\NewTrading\\Trades.csv",sep=";"))
-  ### For office laptop
-  ###trades=data.frame(read.csv("C:\\Users\\martinale\\Documents\\RProjects\\RAnalysis\\Trading\\Trades.csv",sep=";"))
+  trades=getAllTrades()
+  
   trades %<>% filter(TradeNr==trade_nr)
   if (nrow(trades)==0) {
     display_error_message("Trade does not exist!")
@@ -329,6 +340,8 @@ stock_price = function(sec="STK",sym,currency,exchange="SMART",reqType=4) {
   #### Default value for security type is Stock
   #### Default value for exchange is SMART
   message("stock_price")
+  ### Special case for CSBGU0 stock I won in Gonet portfolio
+  if (sym == "CSBGU0") reqType=3
   line=py$getStockValue(sec=sec,sym=sym,currency=currency,exchange=exchange,reqType=reqType)
   
   #### readline works only in interactive mode, 
@@ -357,8 +370,8 @@ stock_price = function(sec="STK",sym,currency,exchange="SMART",reqType=4) {
 getCurrencyPairs = function() {
   message("getCurrencyPairs")
   ### euro_usd and chf_usd data frames - values for the day- are already retrieved
-  usd=read.csv("C:/Users/aldoh/Documents/NewTrading/CurrencyPairs.csv",sep=";")
-  
+  usd=getAllCurrencyPairs()
+
   ### Convert string to date
   last_usd=last(usd)
   last_date=ymd(last_usd$date)
@@ -431,10 +444,12 @@ convert_to_usd = function(amount,currency,EUR,CHF) {
 }
 
 convert_to_usd_date = function(amount,currency,date) {
-  usd=read.csv("C:/Users/aldoh/Documents/NewTrading/CurrencyPairs.csv",sep=";")
+  usd=usd=getAllCurrencyPairs()
   usd$date=ymd(usd$date)
   
   input=tibble(amount,currency,date)
+  
+  ### Retrieve at a given date
   data=left_join(input,usd)
   convert_to_usd(data$amount,data$currency,data$EUR,data$CHF)
   
@@ -445,3 +460,19 @@ convert_to_usd_date = function(amount,currency,date) {
 # currency=c("CHF","USD","EUR")
 # date=ymd(c(20231110,20231109,20231115))
 # 
+
+
+## Compare symbol, expiration date and position - 
+## price cannot be used as combined spread (vertical) may exist in portfolio files
+### dt contains symbol, date, avgCost, pos
+# getUPrice = function(dt) {
+#   portf1= data.frame(read.csv("C:\\Users\\aldoh\\Documents\\NewTrading\\U1804173.csv",sep=";"))
+#   portf2= data.frame(read.csv("C:\\Users\\aldoh\\Documents\\NewTrading\\DU5221795.csv",sep=";"))
+#   portf=rbind(portf1,portf2)
+#   
+#   ### Convert from European date format to internal R date format
+#   portf$date=as.Date(portf$date,format="%d.%m.%Y") 
+#   
+#   portf = right_join(portf,dt,by=c("symbol"="sym","date"))
+#   portf %>% replace(is.na(.), 0) %>% group_by(date,symbol) %>% summarize(uPrice=max(undPrice)) %>% ungroup
+# }

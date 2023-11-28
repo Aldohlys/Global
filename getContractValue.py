@@ -5,6 +5,8 @@ import sys
 import datetime
 import simplejson
 import pandas as pd
+import collections
+import locale
 
 def is_port_in_use(port):
     import socket
@@ -19,6 +21,24 @@ def getPort():
     print("Port id:",port_id)
   return port_id
 
+def determine_sec(sym):
+  if (any(sym==x for x in ["ESTX50","XSP","SPX"])): return "IND"
+  else: return "STK"
+  
+def determine_exch(sym):
+  if (any(sym==x for x in ["XSP","SPX"])): return "CBOE"
+  if (sym=="ESTX50"): return "EUREX"
+  if (sym=="DTLA"): return "LSEETF"
+  if (sym=="CSBGU0"): return "EBS"
+  return "SMART"
+
+def determine_sym(sym):
+  if (".SW" in sym): return sym[:-3]
+  if (".PA" in sym): return sym[:-3]
+  if (".L" in sym): return sym[:-2]
+  return sym
+
+
 def getStockValue(sec,sym,currency,exchange,reqType):
   ### This function returns either:
   ### -1 if contract does not exist or
@@ -27,18 +47,22 @@ def getStockValue(sec,sym,currency,exchange,reqType):
   ### a dataframe with date and time, symbol and price + 
   ###    store record into prices.cv file if new record
   
+  ### Case where called from a batch and prices are stored
+  locale.setlocale(locale.LC_ALL, '')
+  
   ### Retrieve last prices for 'sym' if any
   print("getStockValue")
   stored_prices=pd.read_csv("C:/Users/aldoh/Documents/Global/prices.csv",sep=';')
   line=stored_prices.loc[stored_prices['sym'] == sym]
   
-  ### Take last line of lines if at least one
+  ### Return last line of lines if at least one and the line is less than 60 minutes old
+  ### Otherwise do not take it into account
   if not line.empty: 
     line =line.iloc[-1]
     limit_to_reload= datetime.datetime.now()-datetime.timedelta(minutes=60)
     last_storage=datetime.datetime.strptime(line["datetime"],'%d %b %Y %Hh%M')
-    if last_storage > limit_to_reload:
-      return(line)
+    if (last_storage > limit_to_reload): return(line)
+    line = pd.DataFrame()
   
   ## Try to establish connection
   ib = IB()
@@ -47,12 +71,12 @@ def getStockValue(sec,sym,currency,exchange,reqType):
   except ConnectionError:
     print("From IB: Connection error")
     #### If no IB connection possible then return either last value or None
-    if not line.empty : return line
-    else : return None
-  
+    if line.empty: return None
+    return line
+    
   ##### INDIVIDUAL CONTRACTS
   contract = Contract(symbol=sym,secType=sec,exchange=exchange,currency=currency) # Simple contract
-  print("\nContract:",contract)
+  print("Contract:",contract)
   
   if(ib.qualifyContracts(contract)):
     ib.reqMarketDataType(int(reqType)) ### Request type - Should be 2 or 4
@@ -65,8 +89,9 @@ def getStockValue(sec,sym,currency,exchange,reqType):
     if(math.isnan(value)):
     #### Either return last stored value if available or return NaN
       print("from IB: NA")
-      if not line.empty : return line
-      else : return None
+      if line.empty: return None
+      return line
+    
   else:
     ib.sleep(1)
     ib.disconnect()
@@ -88,6 +113,7 @@ def getStockValue(sec,sym,currency,exchange,reqType):
   return(df)
 
 def getCurrencyPairValue(currency_pair,reqType):
+  print("\ngetCurrencyPairValue")
   ib = IB()
   try:
     ib.connect('127.0.0.1', 7496, clientId=getPort())    # use this one for TWS (Traders Workstation) acct mgt
@@ -96,7 +122,7 @@ def getCurrencyPairValue(currency_pair,reqType):
 
   ##### INDIVIDUAL CONTRACTS
   contract = Forex(currency_pair) # Simple contract
-  print("\nContract:",contract)
+  print("Contract:",contract)
   if(ib.qualifyContracts(contract)):
     ib.reqMarketDataType(int(reqType)) ### Request type - Should be 2 or 4
     [ticker] = ib.reqTickers(contract)
@@ -112,7 +138,7 @@ def getCurrencyPairValue(currency_pair,reqType):
   
 
 def getOptValue(sym,expiration,strike,right,currency,exchange,tradingClass):
-  print("getOptValue")
+  print("\ngetOptValue")
   ib = IB()
   try:
     ib.connect('127.0.0.1', 7496, clientId=getPort())    # use this one for TWS (Traders Workstation) acct mgt
@@ -144,7 +170,7 @@ def getOptValue(sym,expiration,strike,right,currency,exchange,tradingClass):
   return(value)
 
 def getStraddleValue(sym,expiration,strike,currency,exchange,tradingClass):
-  print("getStraddleValue")
+  print("\ngetStraddleValue")
   ib = IB()
   try:
     ib.connect('127.0.0.1', 7496, clientId=getPort())    # use this one for TWS (Traders Workstation) acct mgt
@@ -174,6 +200,43 @@ def getStraddleValue(sym,expiration,strike,currency,exchange,tradingClass):
   ib.disconnect()
   return(value)
 
+
+############ For Gonet portfolio
+
+def retrieve_prices(position_list,reqType):
+  
+  locale.setlocale(locale.LC_ALL, '')
+  
+  du=position_list.drop_duplicates(subset='symbol',keep="first")
+  dg=[Contract(secType=determine_sec(determine_sym(sym)),symbol=determine_sym(sym),currency=currency,exchange=determine_exch(determine_sym(sym))) for sym,currency in zip(du["symbol"],du["currency"])]
+  ib.qualifyContracts(*dg)
+  
+  ib.reqMarketDataType(reqType) ### Request type - Should be 2 or 4
+  tickers = ib.reqTickers(*dg)
+  l=[[ticker.contract.symbol,ticker.marketPrice()] for ticker in tickers]
+  
+  du=DataFrame(l,columns=["sym","price"])
+  du=du.dropna(subset="price")
+  
+  if not du.empty:
+    du.insert(0,"datetime",datetime.datetime.now().strftime('%d %b %Y %Hh%M'))
+    du.to_csv("C:/Users/aldoh/Documents/Global/prices.csv",header=False, index=False, mode='a', sep=';')
+
+
+##dh=itertools.islice(dh,len(dh)-1,len(dh))
+def retrieve_gonet_prices():
+  dh = pd.read_csv('C:\\Users\\aldoh\\Documents\\NewTrading\\Gonet.csv',sep=";")
+  dh["date"]=[datetime.datetime.strptime(d, '%d.%m.%Y').date() for d in dh.date]
+  dh = dh.groupby(["date","heure"])
+  dh=next(iter(collections.deque(dh,maxlen=1)))[1]
+  
+  #### DTLA can only be retrieved using reqType = 2 frozen data
+  retrieve_prices(dh[dh.symbol == "DTLA.L"],2)
+  #### CSBGU0 can only be retrieved using reqType = 4 delayed frozen data
+  #### Other stocks don't care
+  retrieve_prices(dh[dh.symbol!= "DTLA.L"], 4)
+  
+  
 ###################################  General functions about options chains ###############
 def find_nearest_number(numbers, target):
     if not numbers:

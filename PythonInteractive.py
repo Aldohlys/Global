@@ -24,6 +24,7 @@ strike=21
 
 ib.reqMarketDataType(4)
 
+sec="STK"
 secType="STK"
 secType="IND"
 secType="FUND"
@@ -71,7 +72,18 @@ expdate='20231215'
 strike=4350.0
 strike=21.0
 
+reqType=4
+
+#### Retrieve prices and print them
+
+dj=pd.DataFrame([["ESTX50","EUR"]],columns=["symbol","currency"])
+retrieve_prices(dj,2)
+retrieve_prices(dj,4)
+
+
 ########### For one option
+
+
 
 option=[Contract(secType='OPT',symbol=sym,lastTradeDateOrContractMonth=expdate,
                     strike=strike,right='Call',exchange=exchangeOpt,tradingClass=tradingClass)]
@@ -97,4 +109,5 @@ contract=Contract(secType=secType,symbol=sym,exchange=exchange,currency=currency
 ib.qualifyContracts(contract)
 ticker = ib.reqTickers(contract)
 ticker[0].marketPrice()
+
 
