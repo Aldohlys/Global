@@ -9,11 +9,11 @@
 #### getVol : get implied vol given a price, a price function
 
 library(derivmkts) ### for basic bsput, bscall and Greeks computation
-library(quantmod) ### To retrieve stock quotes from Yahoo src
-library(lubridate) ### to manage dates and time
-library(dplyr) ### Data manipulation
-library(purrr) ### Functional programing (e.g. pmap)
-library(tidyr)
+# library(quantmod) ### To retrieve stock quotes from Yahoo src
+# library(lubridate) ### to manage dates and time
+# library(dplyr) ### Data manipulation
+##library(purrr) ### Functional programing (e.g. pmap)
+##library(tidyr)
 
 interest_rate=0.05472 ### 3 months Treasury Bill
 
@@ -193,7 +193,7 @@ getImpliedVolOpt = function(type,S,K,r=interest_rate,DTE,div=0,price) {
 }
 
 getImpliedVolOpt2 = function(df) {
-  return(unlist(pmap(df,getImpliedVolOpt)))
+  return(unlist(purrr::pmap(df,getImpliedVolOpt)))
 }
 
 #### getVOl cannot be vectorized so this cannot be used as vectorized function
