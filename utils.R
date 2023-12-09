@@ -5,13 +5,13 @@
 library(lubridate) ### for today() function
 library(readr)
 library(DescTools) ### for pgcd
-library(quantmod) ## to retrieve data from Yahoo
+library(quantmod) ## to retrieve data from Yahoo - getSymbols
 library(stringr) ### for str_to_upper function
-library(scales) #### for label_percent() function
+library(scales) #### for label_percent() and label_dollar() function
 library(RQuantLib) ## for isBusinessDay function
 
 library(reticulate)
-py_run_file("getContractValue.py")
+py_run_file("C:/Users/aldoh/Documents/Global/getContractValue.py")
 print("Python functions loaded!")
 
 
@@ -32,7 +32,7 @@ display_error_message = function(error_msg) {
 pgcd = function(x) {
   x.na=na.omit(x)
   if (length(x.na)<2) return(as.numeric(x.na))
-  else return(GCD(as.numeric(x.na)))
+  else return(DescTools::GCD(as.numeric(x.na)))
 }
 
 
@@ -100,7 +100,7 @@ buildInstrumentName=function(sym,expdate,strike,type) {
     ### Apply locale used by IBKR to build instrument expiration date
     Sys.setlocale("LC_TIME","English")
     
-    expdate=str_to_upper(format(expdate,"%d%b%y"))
+    expdate=stringr::str_to_upper(format(expdate,"%d%b%y"))
     ### Re-load previous locale
     Sys.setlocale("LC_TIME",loc)
     paste(sym,expdate,strike,right)
@@ -222,7 +222,7 @@ getSymFromDate = function(sym, date) {
   lookup_yahoo = c("ESTX50"="^STOXX50E","MC"="MC.PA","OR"="OR.PA","TTE"="TTE.PA","AI"="AI.PA",
                    "SPX"="^SPX","XSP"="^XSP","NESN"="NESN.SW","HOLN"="HOLN.SW","SLHN"="SLHN.SW")
   sym=if_else(sym %in% names(lookup_yahoo), lookup_yahoo[sym], sym)
-  lapply(sym, function(x) { getSymbols(x,from=date,auto.assign = F,warnings=FALSE)})
+  lapply(sym, function(x) { quantmod::getSymbols(x,from=date,auto.assign = F,warnings=FALSE)})
 }
 
 getSym = function(sym){
@@ -254,7 +254,7 @@ getsymPrice = function(sym,currency,report_date){
   
   ### First case - requested date is an holiday
   ### Get last close price in this case
-  if ((!isBusinessDay("UnitedStates",report_date)) | report_date < today()) {
+  if ((!RQuantLib::isBusinessDay("UnitedStates",report_date)) | report_date < today()) {
     prices_list=getPrice(getSymFromDate(sym,ymd("2023-01-03")))
     report_date = findNearestNumberOrDate(prices_list$date, report_date)
     price = filter(prices_list,date==report_date)
@@ -307,7 +307,7 @@ getLastTickerData = function(ticker) {
     p_last_data=ticks[[nrow(ticks)-1,6]]
     return(list(
       last=round(last_data,2),
-      change=label_percent(accuracy=0.01)(last_data/p_last_data-1)
+      change=scales::label_percent(accuracy=0.01)(last_data/p_last_data-1)
     ))
   }, error = function(e) {
     print(paste("Error:", e))
@@ -396,27 +396,28 @@ getCurrencyPairs = function() {
   return(usd)
 }
 
-#Returns the amount values formatted with their respective currency sign, based on the currency argument
-## Amounts are rounded to 0.01
-
-euro <- label_dollar(
-  prefix = "",
-  suffix = " \u20ac",
-  accuracy=0.01
-)
-chf <- label_dollar(
-  prefix = "",
-  suffix = " CHF",
-  accuracy=0.01
-)
-dollar <- label_dollar(
-  prefix = "",
-  suffix = " $",
-  accuracy=0.01
-)
 
 ### Returns a string with amount and currency symbol
 currency_format = function(amount,currency){
+  #Returns the amount values formatted with their respective currency sign, based on the currency argument
+  ## Amounts are rounded to 0.01
+  
+  euro <- label_dollar(
+    prefix = "",
+    suffix = " \u20ac",
+    accuracy=0.01
+  )
+  chf <- label_dollar(
+    prefix = "",
+    suffix = " CHF",
+    accuracy=0.01
+  )
+  dollar <- label_dollar(
+    prefix = "",
+    suffix = " $",
+    accuracy=0.01
+  )
+  
   if_else (is.na(amount), "", {
     case_match(currency, "EUR"~euro(amount),
            "CHF"~chf(amount),
@@ -426,6 +427,7 @@ currency_format = function(amount,currency){
 
 ### Converts the amount of currency into USD, using getCurrencyPairs
 currency_convert = function(amount,currency) {
+  
   ### Suppress warning that close is only current close and not final one for today
   usd=getCurrencyPairs()
   cur_convert= case_match(currency, "EUR"~usd$EUR,
